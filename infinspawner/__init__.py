@@ -13,7 +13,7 @@ from traitlets import (
 )
 
 class InfinSpawner(Spawner):
-    prodcode = 'XXXXXXXXXXXXXXXXXXXXXXXXX'
+    prodcode = 'XXXXXXXXXXXXXXXXXXXXXXXXX' # AWS Marketplace product code
     client_id = None
     id_token = None
     access_token = None

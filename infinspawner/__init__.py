@@ -13,13 +13,9 @@ from traitlets import (
 )
 
 class InfinSpawner(Spawner):
-    prodcode = 'XXXXXXXXXXXXXXXXXXXXXXXXX' # AWS Marketplace product code
-    client_id = None
-    id_token = None
-    access_token = None
-    refresh_token = None
-    xform_name = 'js40' # should populate from customer info
-    instance_type = None # should populate from customer info
+
+    prodcode = '9fcazc4rbiwp6ewg4xlt5c8fu'
+    xform_name = 'jlab1' # should populate from customer info
 
     infinstor_service_name = Unicode(
         "infinstor.com",
@@ -40,6 +36,8 @@ class InfinSpawner(Spawner):
         self.log.info("InfinSpawner.start: id_token=" + str(self.id_token))
         self.log.info("InfinSpawner.start: refresh_token=" + str(self.refresh_token))
         customer_info = self.get_customer_info()
+        self.user_name = customer_info['userName']
+        self.log.info("InfinSpawner.start: user_name=" + str(self.user_name))
         self.log.info("InfinSpawner.start: customer_info=" + json.dumps(customer_info))
 
         if (not 'jupyterInstanceType' in customer_info):
@@ -52,10 +50,11 @@ class InfinSpawner(Spawner):
         if (experiment_id == None):
             raise
 
-        self.create_periodic_run(self.xform_name, self.instance_type, experiment_id)
+        self.create_periodic_run(InfinSpawner.xform_name, self.instance_type, experiment_id)
 
         start_time = round(datetime.now(timezone.utc).timestamp())
-        self.log.info('InfinSpawner.start. entering sleep for 15 minutes. start_time=' + str(start_time)
+        self.log.info('InfinSpawner.start. user_name=' + self.user_name\
+                + '. Entering sleep for 15 minutes. start_time=' + str(start_time)
                 + ', api_token=' + str(self.api_token))
 
         loop = asyncio.get_running_loop()
@@ -65,13 +64,17 @@ class InfinSpawner(Spawner):
             if ((loop.time() + 60) >= end_time):
                 break
             await asyncio.sleep(60)
-            self.log.info('InfinSpawner.start. checking if done. time=' + str(round(datetime.now(timezone.utc).timestamp())))
+            self.log.info('InfinSpawner.start. user_name=' + str(self.user_name)\
+                    + '. checking if done. time=' + str(round(datetime.now(timezone.utc).timestamp())))
             if (self.check_if_done(experiment_id, start_time) == True):
-                self.log.info('InfinSpawner.start: started. host=' + self.ip + ':' + str(self.port))
+                self.log.info('InfinSpawner.start: started. user_name=' + str(self.user_name)\
+                        + '. host=' + self.ip + ':' + str(self.port))
                 return (self.ip, self.port)
             else:
-                self.log.info('InfinSpawner.start: not started yet. continuing to wait')
-        self.log.error('InfinSpawner.start: failed to start')
+                self.log.info('InfinSpawner.start: not started yet. user_name=' + str(self.user_name)\
+                        + '. continuing to wait')
+        self.log.error('InfinSpawner.start: failed to startuser_name=' + str(self.user_name)\
+                + '. ')
         raise Exception('Start', 'Failed')
 
     def check_if_done(self, experiment_id, start_time):
@@ -123,45 +126,69 @@ class InfinSpawner(Spawner):
 
     async def poll(self):
         self.log.info('InfinSpawner.poll')
-        #for key, val in self.user.settings.items():
-        #    self.log.info('InfinSpawner.poll: user.settings.' + str(key) + '=' + str(val))
-        url = 'http://' + self.ip + ':' + str(self.port) + '/'
+        url = 'https://mlflow.' + self.infinstor_service_name + '/api/2.0/mlflow/projects/singlevm-status'
+        self.log.info('InfinSpawner.poll: url=' + str(url))
+        if (not self.id_token):
+            self.log.info('InfinSpawner.poll: user_name=' + str(self.user_name)\
+                    + '. Error. id_token not present. unable to check status. returning not-running.')
+            self.clear_state()
+            return 0
+
+        headers = {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Authorization': 'Bearer ' + self.id_token
+            }
+        self.log.info('InfinSpawner.poll: user_name=' + str(self.user_name)\
+                + '. headers=' + str(headers))
+        payload = '{ "instance_type": "' + self.instance_type + '", "periodic_run_name": "jupyterlab"}'
+
         try:
-            response = requests.get(url)
+            response = requests.post(url, data=payload, headers=headers, timeout=45.0)
             response.raise_for_status()
         except HTTPError as http_err:
-            if (response.status_code == 405 or response.status_code == 404):
-                self.log.error('InfinSpawner.poll: got 404/405. notebook server is alive')
-                return None
-            else:
-                self.log.error(f'InfinSpawner.poll: HTTP error occurred: {http_err}')
-                self.clear_state()
-                return 0
+            self.log.error(f'HTTP error occurred: {http_err}')
+            self.clear_state()
+            return 0
         except Exception as err:
-            self.log.error(f'InfinSpawner.poll: Other error occurred: {err}')
+            self.log.error(f'Other error occurred: {err}')
             self.clear_state()
             return 0
         else:
-            self.log.info('InfinSpawner.poll success')
-            return None
+            self.log.info('InfinSpawner.poll user_name=' + str(self.user_name)\
+                    + '. singlevm_status success. VM=')
+            resp_json = response.json()
+            self.log.info('InfinSpawner.poll: user_name=' + str(self.user_name)\
+                    + '. resp=' + json.dumps(resp_json))
+            if ('status' in resp_json and resp_json['status'] == 'running'):
+                self.log.info('InfinSpawner.poll user_name=' + str(self.user_name)\
+                        + '. VM is running. Success')
+                return None
+            else:
+                self.log.info('InfinSpawner.poll user_name=' + str(self.user_name)\
+                        + '. VM indeterminate state. Failed')
+                self.clear_state()
+                return 0
 
     async def stop(self, now=False):
         self.log.info('InfinSpawner.stop')
         url = 'https://mlflow.' + self.infinstor_service_name + '/api/2.0/mlflow/projects/stop-singlevm'
-        self.log.info('InfinSpawner.stop: url=' + str(url))
+        self.log.info('InfinSpawner.stop: user_name=' + str(self.user_name)\
+                + '. url=' + str(url))
         if (not self.id_token):
-            self.log.info('InfinSpawner.stop: Error. id_token not present. unable to stop')
+            self.log.info('InfinSpawner.stop: user_name=' + str(self.user_name)\
+                    + '. Error. id_token not present. unable to stop')
             return
 
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
             'Authorization': 'Bearer ' + self.id_token
             }
-        self.log.info('InfinSpawner.stop: headers=' + str(headers))
+        self.log.info('InfinSpawner.stop: user_name=' + str(self.user_name)\
+                + '. headers=' + str(headers))
         payload = '{ "instance_type": "' + self.instance_type + '", "periodic_run_name": "jupyterlab"}'
 
         try:
-            response = requests.post(url, data=payload, headers=headers)
+            response = requests.post(url, data=payload, headers=headers, timeout=45.0)
             response.raise_for_status()
         except HTTPError as http_err:
             self.log.error(f'HTTP error occurred: {http_err}')
@@ -172,8 +199,10 @@ class InfinSpawner(Spawner):
             self.clear_state()
             raise
         else:
-            self.log.info('InfinSpawner.stop success!')
-            self.log.info('InfinSpawner.stop: resp=' + str(response.text))
+            self.log.info('InfinSpawner.stop user_name=' + str(self.user_name)\
+                    + '. success!')
+            self.log.info('InfinSpawner.stop: user_name=' + str(self.user_name)\
+                    + '. resp=' + str(response.text))
             self.clear_state()
 
     def load_state(self, state):
@@ -246,10 +275,9 @@ class InfinSpawner(Spawner):
         self.access_token = access_token
         self.id_token = id_token
         self.refresh_token = refresh_token
-        self.client_id = client_id
 
     def get_customer_info(self):
-        payload = ("ProductCode=" + self.prodcode + "&clientType=jupyterhub")
+        payload = ("ProductCode=" + InfinSpawner.prodcode + "&clientType=jupyterhub")
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
             'Authorization': 'Bearer ' + self.id_token
@@ -312,7 +340,8 @@ class InfinSpawner(Spawner):
             self.log.info(f'Other error occurred: {err}')
             return None
         else:
-            self.log.info('InfinSpawner: create_mlflow_experiment success. Trying to set persistent tag')
+            self.log.info('InfinSpawner: create_mlflow_experiment success. user_name=' + str(self.user_name)\
+                    + '. Trying to set persistent tag')
 
         experiment_id = resp_json['experiment_id']
         payload = '{ "experiment_id": "' + str(experiment_id) + '", "key": "persistent", "value": "true" }'
@@ -373,7 +402,9 @@ class InfinSpawner(Spawner):
             self.log.error(f'Other error occurred: {err}')
             raise
         else:
-            self.log.info('InfinSpawner.create_periodic_run success!')
-            self.log.info('InfinSpawner.create_periodic_run: resp=' + str(response.text))
+            self.log.info('InfinSpawner.create_periodic_run user_name=' + str(self.user_name)\
+                    + '. success!')
+            self.log.info('InfinSpawner.create_periodic_run: user_name=' + str(self.user_name)\
+                    + '. resp=' + str(response.text))
             return response.json()
 

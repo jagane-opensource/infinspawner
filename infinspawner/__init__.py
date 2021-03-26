@@ -124,21 +124,20 @@ class InfinSpawner(Spawner):
                 self.log.info('No runs available')
                 return False
 
-    async def poll(self):
-        self.log.info('InfinSpawner.poll')
+    def poll_vm_state(self):
+        self.log.info('InfinSpawner.poll_vm_state. user_name =' + str(self.user_name))
         url = 'https://mlflow.' + self.infinstor_service_name + '/api/2.0/mlflow/projects/singlevm-status'
-        self.log.info('InfinSpawner.poll: url=' + str(url))
+        self.log.info('InfinSpawner.poll_vm_state: url=' + str(url))
         if (not self.id_token):
-            self.log.info('InfinSpawner.poll: user_name=' + str(self.user_name)\
+            self.log.info('InfinSpawner.poll_vm_state: user_name=' + str(self.user_name)\
                     + '. Error. id_token not present. unable to check status. returning not-running.')
-            self.clear_state()
             return 0
 
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
             'Authorization': 'Bearer ' + self.id_token
             }
-        self.log.info('InfinSpawner.poll: user_name=' + str(self.user_name)\
+        self.log.info('InfinSpawner.poll_vm_state: user_name=' + str(self.user_name)\
                 + '. headers=' + str(headers))
         payload = '{ "instance_type": "' + self.instance_type + '", "periodic_run_name": "jupyterlab"}'
 
@@ -147,25 +146,72 @@ class InfinSpawner(Spawner):
             response.raise_for_status()
         except HTTPError as http_err:
             self.log.error(f'HTTP error occurred: {http_err}')
-            self.clear_state()
             return 0
         except Exception as err:
             self.log.error(f'Other error occurred: {err}')
-            self.clear_state()
             return 0
         else:
-            self.log.info('InfinSpawner.poll user_name=' + str(self.user_name)\
+            self.log.info('InfinSpawner.poll_vm_state user_name=' + str(self.user_name)\
                     + '. singlevm_status success. VM=')
             resp_json = response.json()
-            self.log.info('InfinSpawner.poll: user_name=' + str(self.user_name)\
+            self.log.info('InfinSpawner.poll_vm_state: user_name=' + str(self.user_name)\
                     + '. resp=' + json.dumps(resp_json))
             if ('status' in resp_json and resp_json['status'] == 'running'):
-                self.log.info('InfinSpawner.poll user_name=' + str(self.user_name)\
+                self.log.info('InfinSpawner.poll_vm_state user_name=' + str(self.user_name)\
                         + '. VM is running. Success')
                 return None
             else:
-                self.log.info('InfinSpawner.poll user_name=' + str(self.user_name)\
+                self.log.info('InfinSpawner.poll_vm_state user_name=' + str(self.user_name)\
                         + '. VM indeterminate state. Failed')
+                return 0
+
+    def poll_notebook_server(self):
+        self.log.info('InfinSpawner.poll_notebook_server. user_name =' + str(self.user_name))
+        url = 'http://' + self.ip + ':' + str(self.port) + '/'
+        try:
+            response = requests.get(url, timeout=5)
+            response.raise_for_status()
+        except HTTPError as http_err:
+            if (response.status_code == 405 or response.status_code == 404):
+                self.log.error('InfinSpawner.poll_notebook_server: user_name=' + str(self.user_name)\
+                        + ' got 404/405. notebook server is alive')
+                return None
+            else:
+                self.log.error(f'InfinSpawner.poll_notebook_server: user_name=' + str(self.user_name)\
+                        + ' HTTP error occurred: {http_err}')
+                return 0
+        except Exception as err:
+            self.log.error(f'InfinSpawner.poll_notebook_server: user_name=' + str(self.user_name)\
+                    + ' Other error occurred: {err}')
+            return 0
+        else:
+            self.log.info('InfinSpawner.poll_notebook_server user_name=' + str(self.user_name)\
+                    + ' success')
+            return None
+
+    async def poll(self):
+        if (self.poll_notebook_server() == None):
+            self.log.info('InfinSpawner.poll. user_name =' + str(self.user_name) + '. Notebook server is up. -> Success')
+            # notebook server is up
+            return None
+        else:
+            # notebook server is down
+            if (self.poll_vm_state() == None):
+                # notebook server is down, but VM is up
+                # wait 10 seconds and see if notebook server responds
+                await asyncio.sleep(10)
+                if (self.poll_notebook_server() == None):
+                    # notebook server came back up
+                    self.log.info('InfinSpawner.poll. user_name =' + str(self.user_name) + '. Notebook server is back up. -> Success')
+                    return None
+                else:
+                    # notebook server is down, but VM is still up
+                    self.log.info('InfinSpawner.poll. user_name =' + str(self.user_name) + '. Notebook server is down. VM is up. -> Fail')
+                    self.clear_state()
+                    return 0
+            else:
+                # notebook server is down and VM is also down
+                self.log.info('InfinSpawner.poll. user_name =' + str(self.user_name) + '. Notebook server is down. VM is down. -> Fail')
                 self.clear_state()
                 return 0
 

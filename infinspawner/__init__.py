@@ -15,7 +15,7 @@ from traitlets import (
 class InfinSpawner(Spawner):
 
     prodcode = '9fcazc4rbiwp6ewg4xlt5c8fu'
-    xform_name = 'jlab1' # should populate from customer info
+    xform_name = 'https://github.com/infinstor/jupyterlab' # should populate from customer info
 
     infinstor_service_name = Unicode(
         "infinstor.com",
@@ -31,14 +31,14 @@ class InfinSpawner(Spawner):
         env = super(InfinSpawner, self).get_env()
         for key, value in env.items():
             self.log.info('InfinSpawner.start. env ' + str(key) + ' = ' + str(value))
+        if (not self.auth):
+            raise ValueError('auth not found. Cannot proceed')
 
-        self.log.info("InfinSpawner.start: access_token=" + str(self.access_token))
-        self.log.info("InfinSpawner.start: id_token=" + str(self.id_token))
-        self.log.info("InfinSpawner.start: refresh_token=" + str(self.refresh_token))
+        self.log.info("InfinSpawner.start: id_token=" + str(self.auth.get_id_token()))
         customer_info = self.get_customer_info()
         self.user_name = customer_info['userName']
         self.log.info("InfinSpawner.start: user_name=" + str(self.user_name))
-        self.log.info("InfinSpawner.start: customer_info=" + json.dumps(customer_info))
+        #self.log.info("InfinSpawner.start: customer_info=" + json.dumps(customer_info))
 
         if (not 'jupyterInstanceType' in customer_info):
             raise ValueError('jupyterInstanceType not specified')
@@ -80,7 +80,7 @@ class InfinSpawner(Spawner):
     def check_if_done(self, experiment_id, start_time):
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
-            'Authorization': 'Bearer ' + self.id_token
+            'Authorization': 'Bearer ' + self.auth.get_id_token()
             }
         payload = '{"experiment_ids": ["' + str(experiment_id) + '"], "filter": "", "run_view_type": "ACTIVE_ONLY", "max_results": 1, "order_by": []}'
 
@@ -127,15 +127,15 @@ class InfinSpawner(Spawner):
     def poll_vm_state(self):
         self.log.info('InfinSpawner.poll_vm_state. user_name =' + str(self.user_name))
         url = 'https://mlflow.' + self.infinstor_service_name + '/api/2.0/mlflow/projects/singlevm-status'
-        self.log.info('InfinSpawner.poll_vm_state: url=' + str(url))
-        if (not self.id_token):
+        self.log.info('InfinSpawner.poll_vm_state: user_name=' + str(self.user_name) + ', url=' + str(url))
+        if (not self.auth or not self.auth.get_id_token()):
             self.log.info('InfinSpawner.poll_vm_state: user_name=' + str(self.user_name)\
                     + '. Error. id_token not present. unable to check status. returning not-running.')
             return 0
 
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
-            'Authorization': 'Bearer ' + self.id_token
+            'Authorization': 'Bearer ' + self.auth.get_id_token()
             }
         self.log.info('InfinSpawner.poll_vm_state: user_name=' + str(self.user_name)\
                 + '. headers=' + str(headers))
@@ -220,14 +220,14 @@ class InfinSpawner(Spawner):
         url = 'https://mlflow.' + self.infinstor_service_name + '/api/2.0/mlflow/projects/stop-singlevm'
         self.log.info('InfinSpawner.stop: user_name=' + str(self.user_name)\
                 + '. url=' + str(url))
-        if (not self.id_token):
+        if (not self.auth or not self.auth.get_id_token()):
             self.log.info('InfinSpawner.stop: user_name=' + str(self.user_name)\
                     + '. Error. id_token not present. unable to stop')
-            return
+            raise ValueError('id_token not present')
 
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
-            'Authorization': 'Bearer ' + self.id_token
+            'Authorization': 'Bearer ' + self.auth.get_id_token()
             }
         self.log.info('InfinSpawner.stop: user_name=' + str(self.user_name)\
                 + '. headers=' + str(headers))
@@ -252,6 +252,7 @@ class InfinSpawner(Spawner):
             self.clear_state()
 
     def load_state(self, state):
+        #self.log.info('InfinSpawner.load_state. user_name=' + str(self.user_name))
         self.log.info('InfinSpawner.load_state')
         """Restore state of spawner from database.
 
@@ -272,13 +273,13 @@ class InfinSpawner(Spawner):
             self.port = state['port']
         else:
             self.port = 0
-        if ('instance_type' in state):
-            self.instance_type = state['instance_type']
+        if ('user_name' in state):
+            self.user_name = state['user_name']
         else:
-            self.instance_type = None
+            self.user_name = 0
 
     def get_state(self):
-        self.log.info('InfinSpawner.get_state')
+        self.log.info('InfinSpawner.get_state. user_name=' + str(self.user_name))
         """Save state of spawner into database.
 
         A black box of extra state for custom spawners. The returned value of this is
@@ -297,12 +298,12 @@ class InfinSpawner(Spawner):
             state['ip'] = self.ip
         if (self.port and self.port > 0):
             state['port'] = self.port
-        if (self.instance_type):
-            state['instance_type'] = self.instance_type
+        if (self.user_name):
+            state['user_name'] = self.user_name
         return state
 
     def clear_state(self):
-        self.log.info('InfinSpawner.clear_state')
+        self.log.info('InfinSpawner.clear_state. user_name=' + str(self.user_name))
         """Clear any state that should be cleared when the single-user server stops.
 
         State that should be preserved across single-user server instances should not be cleared.
@@ -310,23 +311,22 @@ class InfinSpawner(Spawner):
         Subclasses should call super, to ensure that state is properly cleared.
         """
         super().clear_state()
-        self.api_token = ''
         self.ip = ''
         self.port = 0
+        self.user_name = ''
 
-    def set_auth_state(self, client_id, access_token, id_token, refresh_token):
-        self.log.info("InfinSpawner.set_auth_state: acces_token=" + str(access_token)
-                + ", id_token=" + str(id_token) + ", refresh_token=" + str(refresh_token))
-        self.client_id = client_id
-        self.access_token = access_token
-        self.id_token = id_token
-        self.refresh_token = refresh_token
+    def set_auth(self, auth):
+        self.auth = auth
 
     def get_customer_info(self):
+        if (not self.auth or not self.auth.get_id_token()):
+            self.log.info('InfinSpawner.get_customer_info: user_name=' + str(self.user_name)\
+                    + '. Error. id_token not present')
+            raise ValueError('id_token not present')
         payload = ("ProductCode=" + InfinSpawner.prodcode + "&clientType=jupyterhub")
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
-            'Authorization': 'Bearer ' + self.id_token
+            'Authorization': 'Bearer ' + self.auth.get_id_token()
             }
 
         url = 'https://api.' + self.infinstor_service_name + '/customerinfo'
@@ -348,9 +348,13 @@ class InfinSpawner(Spawner):
             return response.json()
 
     def create_mlflow_experiment(self, experiment_name):
+        if (not self.auth or not self.auth.get_id_token()):
+            self.log.info('InfinSpawner.create_mlflow_experiment: user_name=' + str(self.user_name)\
+                    + '. Error. id_token not present')
+            raise ValueError('id_token not present')
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
-            'Authorization': 'Bearer ' + self.id_token
+            'Authorization': 'Bearer ' + self.auth.get_id_token()
             }
 
         url = 'https://mlflow.' + self.infinstor_service_name +\
@@ -371,7 +375,7 @@ class InfinSpawner(Spawner):
         payload = '{ "name": "' + experiment_name + '" }'
         headers = {
                 'Content-Type': 'application/x-www-form-urlencoded',
-                'Authorization': 'Bearer ' + self.id_token
+                'Authorization': 'Bearer ' + self.auth.get_id_token()
             }
 
         url = 'https://mlflow.' + self.infinstor_service_name + '/Prod/2.0/mlflow/experiments/create'
@@ -409,6 +413,10 @@ class InfinSpawner(Spawner):
         return experiment_id
 
     def create_periodic_run(self, xformname, itype, experiment_id):
+        if (not self.auth or not self.auth.get_id_token()):
+            self.log.info('InfinSpawner.create_periodic_run: user_name=' + str(self.user_name)\
+                    + '. Error. id_token not present')
+            raise ValueError('id_token not present')
         now_utc = datetime.now(timezone.utc)
         now_utc = now_utc + timedelta(seconds=120)
         tt = now_utc.timetuple()
@@ -431,7 +439,7 @@ class InfinSpawner(Spawner):
 
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
-            'Authorization': 'Bearer ' + self.id_token
+            'Authorization': 'Bearer ' + self.auth.get_id_token()
             }
 
         url = 'https://api.' + self.infinstor_service_name + '/addmodifyperiodicrun'

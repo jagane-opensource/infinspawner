@@ -276,7 +276,7 @@ class InfinSpawner(Spawner):
         if ('user_name' in state):
             self.user_name = state['user_name']
         else:
-            self.user_name = 0
+            self.user_name = ''
 
     def get_state(self):
         self.log.info('InfinSpawner.get_state. user_name=' + str(self.user_name))
@@ -314,6 +314,7 @@ class InfinSpawner(Spawner):
         self.ip = ''
         self.port = 0
         self.user_name = ''
+        self.auth = None
 
     def set_auth(self, auth):
         self.auth = auth

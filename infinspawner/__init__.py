@@ -436,7 +436,7 @@ class InfinSpawner(Spawner):
         pr['runtarget'] = {'location': 'aws', 'type': 'singlevm', 'instance_type': itype}
         pr['params'] = {'positional': [],
                 'kwargs': [{'key': 'token', 'value': str(self.api_token)},
-                    {'key': 'service', 'value': str(self.infinstor_service_name)}]}
+                    {'key': 'jupyservice', 'value': str(self.infinstor_service_name)}]}
         pr['experiment_id'] = str(experiment_id)
 
         jpr = json.dumps(pr)

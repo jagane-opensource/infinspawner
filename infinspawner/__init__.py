@@ -128,6 +128,11 @@ class InfinSpawner(Spawner):
         self.log.info('InfinSpawner.poll_vm_state. user_name =' + str(self.user_name))
         url = 'https://mlflow.' + self.infinstor_service_name + '/api/2.0/mlflow/projects/singlevm-status'
         self.log.info('InfinSpawner.poll_vm_state: user_name=' + str(self.user_name) + ', url=' + str(url))
+        if (not hasattr(self, 'auth')):
+            self.log.info('InfinSpawner.poll_vm_state: user_name=' + str(self.user_name)\
+                    + '. Error. no attr auth present. returning not-running.')
+            return 0
+
         if (not self.auth or not self.auth.get_id_token()):
             self.log.info('InfinSpawner.poll_vm_state: user_name=' + str(self.user_name)\
                     + '. Error. id_token not present. unable to check status. returning not-running.')
